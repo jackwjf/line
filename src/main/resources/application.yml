@@ -1,0 +1,16 @@
+server:
+    port: 8080
+
+management:
+    address: 127.0.0.1
+    port: 9100
+
+logging:
+    level:
+        com.linecorp.sample: DEBUG
+linecorp:
+    platform:
+        channel:
+            channelId: 2007585752
+            channelSecret: 51fcc11ecf32bd22e54684a3632f07e1
+            callbackUrl: https://4fe4-123-225-33-16.ngrok-free.app/auth

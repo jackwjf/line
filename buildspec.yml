@@ -1,0 +1,56 @@
+version: 0.2
+
+env:
+  variables:
+    AWS_ACCOUNT_ID: "273466200451"
+    AWS_REGION: "ap-northeast-1"
+    ECR_REPOSITORY: "onlinestudycafe-dev-blog"
+    IMAGE_TAG: "blog-0.1.0-alpha"
+    ECS_CLUSTER: "online-dev-blog"
+    ECS_SERVICE: "online-dev-blog-service"
+    TASK_FAMILY: "online-cafe-blog-task"
+    DOCKERHUB_USERNAME: "taopao2012@gmail.com"
+    DOCKERHUB_PASSWORD: "wjf841016"
+
+phases:
+  pre_build:
+    commands:
+      - echo "Docker Hub にログイン中..."
+      - echo $DOCKERHUB_PASSWORD | docker login --username $DOCKERHUB_USERNAME --password-stdin
+      - echo "Amazon ECR にログイン中..."
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+      - echo "ディレクトリ確認:"
+      - pwd
+  build:
+    commands:
+      - echo "Docker イメージをビルド中..."
+      - cd $CODEBUILD_SRC_DIR   # 返回项目根目录，确保上下文正确
+      - pwd
+      - ls -al
+      - docker buildx build --platform linux/amd64 -t $ECR_REPOSITORY:$IMAGE_TAG .
+      - docker tag $ECR_REPOSITORY:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_TAG
+  post_build:
+    commands:
+      - echo "Docker イメージを ECR にプッシュ中..."
+      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_TAG
+
+      - echo "既存 Task Definition を取得..."
+      - aws ecs describe-task-definition --task-definition $TASK_FAMILY --region $AWS_REGION > taskdef.json
+
+      - echo "不要フィールドを削除..."
+      - jq '.taskDefinition | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .registeredAt, .registeredBy, .compatibilities)' taskdef.json > taskdef_clean.json
+
+      - echo "全ての containerDefinitions のイメージを最新に置換..."
+      - IMAGE_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_TAG"
+      - jq --arg IMAGE "$IMAGE_URI" '.containerDefinitions |= map(.image=$IMAGE)' taskdef_clean.json > taskdef_new.json
+
+      - echo "新しい Task Definition を登録..."
+      - NEW_TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json file://taskdef_new.json --query 'taskDefinition.taskDefinitionArn' --output text)
+      - echo "新しい Task Definition ARN:$NEW_TASK_DEF_ARN"
+
+      - echo "ECS サービスを更新中..."
+      - aws ecs update-service --cluster arn:aws:ecs:$AWS_REGION:$AWS_ACCOUNT_ID:cluster/$ECS_CLUSTER --service arn:aws:ecs:$AWS_REGION:$AWS_ACCOUNT_ID:service/$ECS_SERVICE --task-definition $NEW_TASK_DEF_ARN --force-new-deployment
+
+artifacts:
+  files:
+    - taskdef_new.json
